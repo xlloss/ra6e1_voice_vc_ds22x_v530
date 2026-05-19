@@ -57,6 +57,7 @@ static void PlaySpeexByID(const BYTE *pbySpeexDataBegin, int nMapID);
 
 #include "AudioRecord.h"
 
+#include "qspi.h"
 /*******************************************************************************
  Macro definitions
 *******************************************************************************/
@@ -190,6 +191,7 @@ void voice_main(void)
 
     voice_init();
 
+    qspi_flash_test();
     while (true == nRet)
     {
         nRet = voice_loop();
