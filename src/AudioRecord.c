@@ -33,32 +33,6 @@ int AudioRecordInit()
     }
 
 #if (AUDIO_RECORD == AUDIO_RECORD_I2S)
-    /** GPT for I2S clock */
-    err = R_GPT_Open(&g_i2s_clock_ctrl, &g_i2s_clock_cfg);
-    if (FSP_SUCCESS != err)
-    {
-        DBG_UART_TRACE("\r\n[Error] R_GPT_Open\r\n");
-        return err;
-    }
-
-    err = R_GPT_Start(&g_i2s_clock_ctrl);
-    if (FSP_SUCCESS != err)
-    {
-        DBG_UART_TRACE("\r\n[Error] R_GPT_Start\r\n");
-        R_GPT_Close(&g_i2s_clock_ctrl);
-        return err;
-    }
-
-    /** I2S */
-    err = R_SSI_Open(&g_i2s0_ctrl, &g_i2s0_cfg);
-    if (FSP_SUCCESS != err)
-    {
-        DBG_UART_TRACE("\r\n[Error] R_SSI_Open\r\n");
-        R_GPT_Stop(&g_i2s_clock_ctrl);
-        R_GPT_Close(&g_i2s_clock_ctrl);
-        return err;
-    }
-
 #elif (AUDIO_RECORD == AUDIO_RECORD_SPI)
     err = R_ELC_Open(&g_elc_ctrl, &g_elc_cfg);
     if (FSP_SUCCESS != err)
@@ -170,9 +144,6 @@ int AudioRecordRelease()
     AudioRecordStop();
 
 #if (AUDIO_RECORD == AUDIO_RECORD_I2S)
-    R_SSI_Close(&g_i2s0_ctrl);
-    R_GPT_Stop(&g_i2s_clock_ctrl);
-    R_GPT_Close(&g_i2s_clock_ctrl);
 #elif (AUDIO_RECORD == AUDIO_RECORD_SPI)
     R_SPI_Close(&g_spi_i2s_ctrl);
     R_ELC_Disable(&g_elc_ctrl);
@@ -218,7 +189,6 @@ int AudioRecordStart()
     g_pnRecordBuffer = (int *)lpFree1;
 
 #if (AUDIO_RECORD == AUDIO_RECORD_I2S)
-    err = R_SSI_Read(&g_i2s0_ctrl, g_pnRecordBuffer, RECORD_FRAME_SIZE);
 #elif (AUDIO_RECORD == AUDIO_RECORD_SPI)
     err = R_SPI_Read(&g_spi_i2s_ctrl, (void* const)g_pnRecordBuffer, RECORD_FRAME_SIZE/4, SPI_BIT_WIDTH_32_BITS);
 #elif (AUDIO_RECORD == AUDIO_RECORD_AMIC)
@@ -263,8 +233,6 @@ void AudioRecordResume()
 int AudioRecordGetDataSize(void)
 {
 #if (AUDIO_RECORD == AUDIO_RECORD_I2S)
-    // Audio is 16 bits data, but ring buffer store 32 bits data, so we need to divide by 2.
-    return RingBufferGetDataSize(g_hRingBuffer) / 2;
 #elif (AUDIO_RECORD == AUDIO_RECORD_SPI)
     // Audio is 16 bits data, but ring buffer store 32 bits data, so we need to divide by 2.
     return RingBufferGetDataSize(g_hRingBuffer) / 2;
@@ -280,34 +248,6 @@ int AudioRecordGetData(void *lpBuffer, int nBufferSize)
         return -FSP_ERR_INVALID_ARGUMENT;
 
 #if (AUDIO_RECORD == AUDIO_RECORD_I2S)
-    void *lpData1;
-    void *lpData2;
-    int nData1Size, nData2Size;
-    int32_t *pnDataBuffer;
-    short *psDestBuffer = (short *)lpBuffer;
-    int i;
-
-    // Ring buffer 32 bits data shall have double size.
-    if (RingBufferGetDataSize(g_hRingBuffer) < nBufferSize * 2)
-        return -FSP_ERR_INVALID_SIZE;
-
-    if (RingBufferGetDataBuffer(g_hRingBuffer, nBufferSize * 2, &lpData1, &nData1Size, &lpData2, &nData2Size) != RING_BUFFER_SUCCESS)
-        return -FSP_ERR_INVALID_SIZE;
-
-    if (nData1Size % 4 != 0 || nData2Size % 4 != 0)
-        return -FSP_ERR_ASSERTION;
-
-    pnDataBuffer = (int32_t *)lpData1;
-    nData1Size >>= 2;
-    for (i = 0; i < nData1Size; i++)
-        *psDestBuffer++ = (short)(pnDataBuffer[i] >> 16);
-
-    pnDataBuffer = (int32_t *)lpData2;
-    nData2Size >>= 2;
-    for (i = 0; i < nData2Size; i++)
-        *psDestBuffer++ = (short)(pnDataBuffer[i] >> 16);
-
-    RingBufferDequeueData(g_hRingBuffer, nBufferSize * 2);
 #elif (AUDIO_RECORD == AUDIO_RECORD_SPI)
     void *lpData1;
     void *lpData2;
@@ -387,86 +327,6 @@ int AudioRecordGetUnderRunCount(void)
 }
 
 #if (AUDIO_RECORD == AUDIO_RECORD_I2S)
-
-/* Callback function */
-void g_audio_cb(i2s_callback_args_t *p_args)
-{
-    fsp_err_t err = FSP_SUCCESS;
-
-    switch(p_args->event)
-    {
-        case I2S_EVENT_IDLE: ///< Communication is idle
-            if (g_bRecording)
-            {
-                // Note: The audio recording may interrupt by some reason(system busy, printf at audio thread...),
-                // so we need to resume it, but this also cause burst noise in record data.
-                // Note: Don't printf() here, it will cause record fail and buffer overflow.
-                g_nUnderRunCount++;
-                err = R_SSI_Read(&g_i2s0_ctrl, g_pnRecordBuffer, RECORD_FRAME_SIZE);
-                if (FSP_SUCCESS != err)
-                {
-                    DBGTRACE("i2s re-start read fail. err = 0x%x\r\n", err);
-                    ToggleLED(LED_B);
-                }
-            }
-            else
-            {
-                // Normal stop.
-                int nDataSize = RingBufferGetDataSize(g_hRingBuffer);
-                DBGTRACE("callback: I2S_EVENT_IDLE %d\r\n", nDataSize);
-            }
-            break;
-
-        case I2S_EVENT_TX_EMPTY: ///< Transmit buffer is below FIFO trigger level
-            DBGTRACE("callback: I2S_EVENT_TX_EMPTY\r\n");
-            break;
-
-        case I2S_EVENT_RX_FULL: ///< Receive buffer is above FIFO trigger level
-            // g_pnRecordBuffer has new record data.
-            if (g_bRecording)
-            {
-                if (g_bSkipRecordData)
-                {
-                    // Don't call RingBufferEnqueueData() to enlarge data size.
-                    // Use g_pnRecordBuffer to record repeatedly.
-                }
-                else
-                {
-                    int nFreeSize;
-                    void *lpFree1 = NULL;
-                    void *lpFree2 = NULL;
-                    int nFree1Size = 0;
-                    int nFree2Size = 0;
-
-                    RingBufferEnqueueData(g_hRingBuffer, RECORD_FRAME_SIZE);
-                    nFreeSize = RingBufferGetFreeSize(g_hRingBuffer);
-                    if (nFreeSize < (int)RECORD_FRAME_SIZE)
-                    {
-                        g_nRBufLostCount++;
-                        RingBufferDequeueData(g_hRingBuffer, RECORD_FRAME_SIZE);
-                    }
-                    RingBufferGetFreeBuffer(g_hRingBuffer, RECORD_FRAME_SIZE, &lpFree1, &nFree1Size, &lpFree2, &nFree2Size);
-                    g_pnRecordBuffer = (int *)lpFree1;
-                    if (lpFree2 != NULL || nFree2Size != 0)
-                        __BKPT(0);
-                }
-
-                err = R_SSI_Read(&g_i2s0_ctrl, g_pnRecordBuffer, RECORD_FRAME_SIZE);
-                if (FSP_SUCCESS != err)
-                {
-                    //DBGTRACE("i2s continue read fail! err = 0x%x\r\n", err);
-                    ToggleLED(LED_B);
-                }
-            }
-
-            g_nRecordCount++;
-            break;
-
-        default:
-            break;
-    }
-}
-
 #elif (AUDIO_RECORD == AUDIO_RECORD_SPI)
 
 void g_spi_cb(spi_callback_args_t *p_args)
