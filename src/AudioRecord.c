@@ -6,6 +6,7 @@
 #include "DbgTrace.h"
 #include "RingBuffer.h"
 #include "s_cache.h"
+#include "mode_switch.h"
 
 #define RECORD_FRAME_SIZE        320
 
@@ -19,6 +20,14 @@ static volatile int g_nRecordCount = 0;
 static volatile int g_nRBufLostCount = 0;
 static volatile int g_nUnderRunCount = 0;
 static volatile int *g_pnRecordBuffer = NULL;
+static uint8_t audio_record_mode = 0;
+static adc_channel_cfg_t local_channel_cfg;
+static uint32_t adc_dma_addr = VD_PRV_ADC0_ADDR;
+
+void Audio_Channel_Init()
+{
+    memcpy(&local_channel_cfg, &g_adc_amic_channel_cfg, sizeof(adc_channel_cfg_t));
+}
 
 int AudioRecordInit()
 {
@@ -103,7 +112,7 @@ int AudioRecordInit()
         __BKPT(0);
     }
 
-    err = R_ADC_ScanCfg(&g_adc_amic_ctrl, &g_adc_amic_channel_cfg);
+    err = R_ADC_ScanCfg(&g_adc_amic_ctrl, &local_channel_cfg);
     if (FSP_SUCCESS != err)
     {
         DBG_UART_TRACE("\r\n[Error] R_ADC_ScanCfg: AMIC\r\n");
@@ -194,7 +203,7 @@ int AudioRecordStart()
 #elif (AUDIO_RECORD == AUDIO_RECORD_AMIC)
     R_DMAC_Disable(&g_transfer_adc_ctrl);
     R_DMAC_Reset(&g_transfer_adc_ctrl,
-                (void*)VD_PRV_ADC0_ADDR,
+                (void*)adc_dma_addr,
                 (void*)g_pnRecordBuffer,
                 RECORD_FRAME_SIZE/2);
     R_DMAC_Enable(&g_transfer_adc_ctrl);
@@ -326,6 +335,23 @@ int AudioRecordGetUnderRunCount(void)
     return g_nUnderRunCount;
 }
 
+void AudioRecordModeSet(uint8_t audio_mode)
+{
+    audio_record_mode = audio_mode;
+    if (AMIC_L_MODE) {
+        local_channel_cfg.scan_mask = (1ULL << AMIC_LEFT_CHANNEL);
+        adc_dma_addr = VD_PRV_ADC0_ADDR;
+    } else {
+        local_channel_cfg.scan_mask = (1ULL << AMIC_RIGHT_CHANNEL);
+        adc_dma_addr = VD_PRV_ADC1_ADDR;
+    }
+}
+
+uint8_t AudioRecordModeGet(void)
+{
+    return audio_record_mode;
+}
+
 #if (AUDIO_RECORD == AUDIO_RECORD_I2S)
 #elif (AUDIO_RECORD == AUDIO_RECORD_SPI)
 
@@ -432,7 +458,7 @@ void cb_dma_end(dmac_callback_args_t *p_args)
         /* DMA0 */
         R_DMAC_Disable(&g_transfer_adc_ctrl);
         R_DMAC_Reset(&g_transfer_adc_ctrl,
-                        (void*)VD_PRV_ADC0_ADDR,
+                        (void*)adc_dma_addr,
                         (void*)g_pnRecordBuffer,
                         RECORD_FRAME_SIZE/2);
         R_DMAC_Enable(&g_transfer_adc_ctrl);

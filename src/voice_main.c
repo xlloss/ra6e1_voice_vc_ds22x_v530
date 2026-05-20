@@ -253,6 +253,8 @@ static void voice_init(void)
         DBG_UART_TRACE("\r\n[Error] R_ICU_ExternalIrqEnable\r\n");
         __BKPT(0);
     }
+
+    Switch_To_AMIC_Left();
     err = AudioRecordInit();
     if (FSP_SUCCESS != err)
         __BKPT(0);
@@ -264,7 +266,6 @@ static void voice_init(void)
 
     // Process UART read.
     UartAsyncRead(g_byaUartRxBuffer, 1, OnDataReadCompleteCallback);
-
     //DBG_UART_TRACE("voice_init() End\r\n");
 }
 /*******************************************************************************
@@ -288,6 +289,7 @@ static bool voice_loop(void)
     static  int s_nCommandRecordSample = 0;
     static  int s_nCommandRecognizeLimit = COMMAND_STAGE_TIME_MIN;
 
+    fsp_err_t   err = FSP_SUCCESS;
 #ifdef SUPPORT_VOICE_TAG
     if (g_bVoiceTagButtonPressed)
     {
@@ -308,12 +310,20 @@ static bool voice_loop(void)
 
     if (g_bModeSWBtn) {
         g_bModeSWBtn = false;
+        AudioRecordRelease();
         if (AudioRecordModeGet() == AMIC_L_MODE) {
-            AudioRecordModeSet(AMIC_R_MODE);
+            Switch_To_AMIC_Right();
         } else {
-            AudioRecordModeSet(AMIC_L_MODE);
+            Switch_To_AMIC_Left();
         }
         DBG_UART_TRACE("Record_Mode %d\n", AudioRecordModeGet());
+        err = AudioRecordInit();
+        if (FSP_SUCCESS != err)
+            __BKPT(0);
+        err = AudioRecordStart();
+        if (FSP_SUCCESS != err)
+            __BKPT(0);
+
     }
 
     if (g_bUartCheckAlive)

@@ -7,6 +7,13 @@
 extern "C" {
 #endif
 
+#define AMIC_L_MODE 0
+#define AMIC_R_MODE 1
+
+void AudioRecordModeSet(uint8_t audio_mode);
+uint8_t AudioRecordModeGet(void);
+void Audio_Channel_Init();
+
 /**
  * AudioRecordInit - Initialize ring buffer and open I2S/SPI, timer... peripheral devices for recording.
  * Returns 0(FSP_SUCCESS) on success, other value(FSP_ERR_XXX) on error.
