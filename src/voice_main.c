@@ -179,6 +179,7 @@ static void SaveSDModel();
 static void PrintSDModelInfor();
 #endif
 
+static volatile bool g_bModeSWBtn = false;
 /*******************************************************************************
 * Function Name   : voice_main
 * Description     : Voice application main process
@@ -239,7 +240,6 @@ static void voice_init(void)
     /** Cyberon DSpotter */
     ds_decode_init();
 
-#ifdef SUPPORT_VOICE_TAG
     err = R_ICU_ExternalIrqOpen(&g_irq_button_voice_tag_ctrl, &g_irq_button_voice_tag_cfg);
     if (FSP_SUCCESS != err)
     {
@@ -253,7 +253,6 @@ static void voice_init(void)
         DBG_UART_TRACE("\r\n[Error] R_ICU_ExternalIrqEnable\r\n");
         __BKPT(0);
     }
-#endif
     err = AudioRecordInit();
     if (FSP_SUCCESS != err)
         __BKPT(0);
@@ -306,6 +305,16 @@ static bool voice_loop(void)
         return true;
     }
 #endif
+
+    if (g_bModeSWBtn) {
+        g_bModeSWBtn = false;
+        if (AudioRecordModeGet() == AMIC_L_MODE) {
+            AudioRecordModeSet(AMIC_R_MODE);
+        } else {
+            AudioRecordModeSet(AMIC_L_MODE);
+        }
+        DBG_UART_TRACE("Record_Mode %d\n", AudioRecordModeGet());
+    }
 
     if (g_bUartCheckAlive)
     {
@@ -1023,6 +1032,12 @@ void OnDataReadCompleteCallback(void)
     UartAsyncRead(g_byaUartRxBuffer, 1, OnDataReadCompleteCallback);
 }
 
+
+void g_irq_button_voice_tag_cb(external_irq_callback_args_t *p_args)
+{
+    FSP_PARAMETER_NOT_USED(p_args);
+    g_bModeSWBtn = true;
+}
 
 #ifdef SUPPORT_VOICE_TAG
 
